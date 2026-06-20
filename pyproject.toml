@@ -68,6 +68,15 @@ Issues = "https://git.senal.dev/Senal/DeckBridge/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deckbridge"]
+# web_dist (the built SvelteKit SPA) is bundled exclusively via the force-include
+# below, which bypasses .gitignore to ship the otherwise-ignored build output.
+# The `!web_dist/.gitkeep` negation in .gitignore otherwise makes the normal
+# package walk ALSO pick up that one tracked file, and force-include adds it
+# again -> hatchling aborts with "A second file is being added ... at the same
+# path: deckbridge/web_dist/.gitkeep". The `/**` glob keeps the whole web_dist
+# subtree out of the normal walk so force-include is its sole source. (`exclude`
+# does not apply to force-include, so every SPA asset still ships.)
+exclude = ["src/deckbridge/web_dist/**"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/deckbridge/web_dist" = "deckbridge/web_dist"
