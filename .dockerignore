@@ -1,0 +1,22 @@
+# Reduce build context size and avoid leaking dev artifacts into the image.
+.git
+.github
+.venv
+venv
+node_modules
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.svelte-kit
+**/.vite
+web/build
+**/dist
+**/coverage
+.idea
+.vscode
+*.log
+.env
+.env.local
+docs
+tests

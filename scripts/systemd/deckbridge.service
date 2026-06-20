@@ -1,0 +1,39 @@
+[Unit]
+Description=DeckBridge — Stream Deck → MQTT/HTTP smart-button bridge
+Documentation=https://git.senal.dev/Senal/DeckBridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deckbridge
+Group=deckbridge
+SupplementaryGroups=plugdev
+Environment=DECKBRIDGE_DATA_DIR=/var/lib/deckbridge
+Environment=DECKBRIDGE_CONFIG_DIR=/etc/deckbridge
+Environment=DECKBRIDGE_PORT=7878
+ExecStart=/opt/deckbridge/venv/bin/deckbridge run
+Restart=on-failure
+RestartSec=5s
+
+# Hardening — DeckBridge does not need write access outside its data dir,
+# does not call out to other users, and never opens privileged ports.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/deckbridge /etc/deckbridge
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+# USB device access via udev tags (uaccess) + plugdev group; no DeviceAllow
+# rules needed because the daemon talks to /dev/hidraw* via the standard
+# permissions configured in scripts/udev/99-streamdeck.rules.
+
+[Install]
+WantedBy=multi-user.target

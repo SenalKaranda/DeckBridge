@@ -1,0 +1,41 @@
+# Normalize line endings to LF for files that need it (anything Linux-side
+# executes or any text we want stable across Windows/Mac/Linux contributors).
+* text=auto eol=lf
+
+# Explicitly LF for shell scripts and Linux-bound assets.
+*.sh        text eol=lf
+*.rules     text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+
+# Source code.
+*.py        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.cjs       text eol=lf
+*.mjs       text eol=lf
+*.svelte    text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+*.md        text eol=lf
+*.toml      text eol=lf
+*.json      text eol=lf
+
+# Treat lockfiles as binary so diffs are not noisy.
+package-lock.json   binary
+poetry.lock         binary
+uv.lock             binary
+
+# Always treat these as binary.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.svg       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.otf       binary

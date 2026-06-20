@@ -1,0 +1,35 @@
+# DeckBridge udev rules for Elgato Stream Deck devices.
+#
+# Grants non-root user access via the `plugdev` group and tags the device for
+# the systemd `uaccess` mechanism (so the currently logged-in user also has
+# access without group changes).
+#
+# Vendor: Elgato Systems (0fd9)
+# Products covered (all known Stream Deck variants):
+#   0060 Stream Deck Original (gen 1)
+#   006c Stream Deck XL
+#   006d Stream Deck Original v2
+#   006e Stream Deck Mini
+#   0080 Stream Deck MK.2 (the v1 target)
+#   0084 Stream Deck Pedal
+#   008f Stream Deck Mini Mk.2
+#   0090 Stream Deck +
+#   00ab Stream Deck Neo
+#
+# Install with:
+#   sudo install -m 0644 99-streamdeck.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0060", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="006c", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="006d", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="006e", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0080", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0084", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="008f", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="0090", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="00ab", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+
+# hidraw nodes (newer kernels expose Stream Deck devices via hidraw):
+KERNEL=="hidraw*", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0fd9", TAG+="uaccess", GROUP="plugdev", MODE="0660"

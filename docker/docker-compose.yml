@@ -1,0 +1,51 @@
+name: deckbridge
+
+services:
+  deckbridge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: deckbridge:local
+    container_name: deckbridge
+    restart: unless-stopped
+    ports:
+      - "7878:7878"
+    # USB passthrough so the container can talk to the Stream Deck.
+    # On hosts where /dev/bus/usb is not the right path, replace with the
+    # specific /dev/hidraw* device or a docker-compose `device` rule that
+    # matches your platform.
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - deckbridge-data:/data
+    environment:
+      DECKBRIDGE_DATA_DIR: /data
+      DECKBRIDGE_PORT: "7878"
+      # Point at your existing MQTT broker. DeckBridge requires an external
+      # broker; uncomment the mosquitto service below if you want a bundled one.
+      DECKBRIDGE_MQTT_HOST: "${DECKBRIDGE_MQTT_HOST:-host.docker.internal}"
+      DECKBRIDGE_MQTT_PORT: "${DECKBRIDGE_MQTT_PORT:-1883}"
+    # Uncomment when using the bundled mosquitto service:
+    # depends_on:
+    #   - mosquitto
+
+  # ---- Optional bundled MQTT broker ----
+  # Uncomment this service AND the depends_on above to run a Mosquitto broker
+  # alongside DeckBridge. Most users should point at their existing Home
+  # Assistant / Zigbee2MQTT broker instead.
+  #
+  # mosquitto:
+  #   image: eclipse-mosquitto:2
+  #   container_name: deckbridge-mosquitto
+  #   restart: unless-stopped
+  #   ports:
+  #     - "1883:1883"
+  #   volumes:
+  #     - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+  #     - mosquitto-data:/mosquitto/data
+  #     - mosquitto-log:/mosquitto/log
+
+volumes:
+  deckbridge-data:
+  # mosquitto-data:
+  # mosquitto-log:

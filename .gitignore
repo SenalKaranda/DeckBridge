@@ -1,0 +1,92 @@
+# --- Python ---
+# Anchored to repo root to avoid clashing with frontend dirs like
+# web/src/lib/, web/build/, etc.
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+/build/
+/develop-eggs/
+/dist/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Virtual envs ---
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.local
+
+# --- Test / cache ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- Node / SvelteKit / Vite ---
+node_modules/
+.svelte-kit/
+.vite/
+web/build/
+
+# --- Frontend build output (generated, not committed) ---
+# Keep the directory itself so hatchling's force-include path resolves;
+# only its built contents are gitignored.
+src/deckbridge/web_dist/*
+!src/deckbridge/web_dist/.gitkeep
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Local dev data ---
+# Created by `deckbridge run` when DECKBRIDGE_DATA_DIR points here (the
+# repo's default for ad-hoc dev runs). Contains the SQLite db, uploaded
+# icons, and the painter cache — never commit any of it.
+/data/
+/dev-data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# --- Secrets ---
+*.pem
+*.key
+secrets/
+
+# --- AI assistants (per-user state) ---
+# Ignore the local state directories these tools drop into a project
+# (history, indexes, per-user settings). Shared rule files like
+# CLAUDE.md, AGENTS.md, .cursorrules, .windsurfrules, .clinerules,
+# and .github/copilot-instructions.md are NOT ignored — they're meant
+# to be committed when a team adopts them.
+.claude/
+.cursor/
+.aider*
+.continue/
+.codeium/
+.windsurf/
+.cline/
+.zed/
