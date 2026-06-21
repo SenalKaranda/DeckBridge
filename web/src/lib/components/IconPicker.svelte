@@ -59,23 +59,12 @@
       if (uploadInput) uploadInput.value = '';
     }
   }
-
-  function pick(iconId: string) {
-    onSelect(iconId);
-  }
-
-  function clearIcon() {
-    onSelect(null);
-  }
 </script>
 
+<svelte:window onkeydown={(e) => open && e.key === 'Escape' && onClose()} />
+
 {#if open}
-  <div
-    class="backdrop"
-    role="presentation"
-    onclick={onClose}
-    onkeydown={(e) => e.key === 'Escape' && onClose()}
-  ></div>
+  <div class="backdrop" role="presentation" onclick={onClose}></div>
   <div class="modal" role="dialog" aria-modal="true" aria-label="Icon picker">
     <header>
       <h2>Choose an icon</h2>
@@ -85,12 +74,13 @@
     <div class="toolbar">
       <input
         type="search"
-        placeholder="Search…"
+        class="control"
+        placeholder="Search icons…"
         bind:value={search}
         autocomplete="off"
       />
-      <label class="upload-button">
-        Upload PNG/JPG
+      <label class="btn btn--ghost btn--sm upload">
+        Upload…
         <input
           bind:this={uploadInput}
           type="file"
@@ -99,7 +89,9 @@
           onchange={handleUpload}
         />
       </label>
-      <button type="button" class="secondary" onclick={clearIcon}>No icon</button>
+      <button type="button" class="btn btn--subtle btn--sm" onclick={() => onSelect(null)}>
+        No icon
+      </button>
     </div>
 
     {#if error}
@@ -107,9 +99,9 @@
     {/if}
 
     {#if loading && allIcons.length === 0}
-      <p class="muted">Loading…</p>
+      <p class="state">Loading…</p>
     {:else if filtered.length === 0}
-      <p class="muted">No matching icons.</p>
+      <p class="state">No matching icons.</p>
     {:else}
       <div class="grid">
         {#each filtered as icon (icon.id)}
@@ -117,7 +109,7 @@
             type="button"
             class="cell"
             class:selected={icon.id === selectedIconId}
-            onclick={() => pick(icon.id)}
+            onclick={() => onSelect(icon.id)}
             title={`${icon.name} (${icon.source})`}
           >
             <img src={iconsApi.rawUrl(icon.id)} alt={icon.name} loading="lazy" />
@@ -133,15 +125,19 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
+    background: rgba(12, 13, 17, 0.5);
+    backdrop-filter: blur(2px);
     z-index: 100;
   }
   .modal {
     position: fixed;
-    inset: 5vh 10vw;
-    background: #fff;
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    inset: 6vh 50% auto;
+    transform: translateX(50%);
+    width: min(720px, 92vw);
+    max-height: 86vh;
+    background: var(--surface);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-lg);
     z-index: 101;
     display: flex;
     flex-direction: column;
@@ -151,107 +147,93 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid #eee;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
   }
   header h2 {
     margin: 0;
-    font-size: 1.125rem;
+    font-size: 1.05rem;
   }
   .close {
     background: transparent;
     border: none;
     font-size: 1.5rem;
     line-height: 1;
-    padding: 0.25rem 0.5rem;
-    color: #555;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--r-sm);
+    color: var(--text-muted);
+    cursor: pointer;
   }
   .close:hover {
-    color: #000;
+    background: var(--surface-2);
+    color: var(--text);
   }
   .toolbar {
     display: flex;
-    gap: 0.625rem;
-    padding: 0.75rem 1.5rem;
-    border-bottom: 1px solid #eee;
+    gap: 0.55rem;
+    padding: 0.85rem 1.25rem;
+    border-bottom: 1px solid var(--border);
     align-items: center;
   }
-  .toolbar input[type='search'] {
+  .toolbar .control {
     flex: 1;
-    padding: 0.4rem 0.625rem;
-    border: 1px solid #d0d0d0;
-    border-radius: 6px;
-    font: inherit;
   }
-  .upload-button {
-    background: #1d1d1d;
-    color: #fff;
-    padding: 0.4rem 0.75rem;
-    border-radius: 6px;
+  .upload {
     cursor: pointer;
-    font-size: 0.875rem;
-    white-space: nowrap;
-  }
-  .upload-button:hover {
-    background: #333;
-  }
-  .secondary {
-    background: transparent;
-    color: #444;
-    border: 1px solid #d0d0d0;
-    padding: 0.4rem 0.75rem;
-    border-radius: 6px;
-    font: inherit;
-  }
-  .secondary:hover {
-    background: #f3f3f3;
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-    gap: 0.5rem;
-    padding: 1rem 1.5rem;
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+    gap: 0.55rem;
+    padding: 1.1rem 1.25rem;
     overflow-y: auto;
-    flex: 1;
   }
   .cell {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.5rem;
-    background: #1d1d1d;
+    gap: 0.3rem;
+    padding: 0.6rem 0.4rem 0.45rem;
+    background:
+      radial-gradient(120% 120% at 50% 0%, #16171c 0%, var(--device-bg) 70%);
     border: 2px solid transparent;
-    border-radius: 8px;
+    border-radius: var(--r-md);
     cursor: pointer;
+    transition:
+      border-color 0.12s ease,
+      box-shadow 0.12s ease;
   }
   .cell:hover {
-    border-color: #999;
+    border-color: var(--device-edge);
   }
   .cell.selected {
-    border-color: #4c8bf5;
-    background: #232f47;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-ring);
   }
   .cell img {
-    width: 48px;
-    height: 48px;
+    width: 44px;
+    height: 44px;
     object-fit: contain;
   }
   .cap {
-    font-size: 0.75rem;
-    color: #ccc;
+    font-size: 0.72rem;
+    color: #b9bcc6;
     text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 100%;
   }
-  .muted {
-    color: #888;
-    padding: 1rem 1.5rem;
+  .state {
+    color: var(--text-muted);
+    padding: 2rem 1.25rem;
+    text-align: center;
   }
   .error {
-    color: #b00020;
-    padding: 0 1.5rem;
+    color: var(--danger-strong);
+    background: var(--danger-soft);
+    margin: 0;
+    padding: 0.6rem 1.25rem;
+    font-size: 0.875rem;
   }
 </style>

@@ -4,6 +4,8 @@
 
   import { auth } from '$lib/stores/auth.svelte';
 
+  import '../app.css';
+
   let { children } = $props();
 
   async function handleLogout() {
@@ -14,7 +16,7 @@
 
 {#if auth.state === 'authenticated'}
   <header class="topnav">
-    <div class="brand">DeckBridge</div>
+    <div class="brand"><span class="brand-mark"></span>DeckBridge</div>
     <nav>
       <a href="/editor" class:active={$page.url.pathname.startsWith('/editor')}>Editor</a>
       <a href="/diagnostics" class:active={$page.url.pathname.startsWith('/diagnostics')}
@@ -22,7 +24,7 @@
       >
       <a href="/settings" class:active={$page.url.pathname.startsWith('/settings')}>Settings</a>
     </nav>
-    <button type="button" onclick={handleLogout}>Log out</button>
+    <button type="button" class="logout" onclick={handleLogout}>Log out</button>
   </header>
 {/if}
 
@@ -31,69 +33,73 @@
 </main>
 
 <style>
-  :global(html),
-  :global(body) {
-    margin: 0;
-    padding: 0;
-    background: #fafafa;
-    color: #111;
-    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-    line-height: 1.5;
-  }
-  :global(h1, h2, h3) {
-    font-weight: 600;
-    margin: 0 0 0.5rem 0;
-  }
-  :global(button) {
-    font: inherit;
-    cursor: pointer;
-  }
-
   .topnav {
     display: flex;
     align-items: center;
-    gap: 1rem;
-    padding: 0.75rem 1.5rem;
-    background: #1d1d1d;
+    gap: 1.25rem;
+    padding: 0.7rem 1.5rem;
+    background: var(--device-bg);
     color: #f1f1f1;
-    border-bottom: 1px solid #000;
+    position: sticky;
+    top: 0;
+    z-index: 50;
   }
   .brand {
-    font-weight: 600;
-    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+  }
+  .brand-mark {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--accent) 0%, #8a64ff 100%);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
   nav {
     display: flex;
-    gap: 0.75rem;
+    gap: 0.25rem;
     flex: 1;
   }
   nav a {
-    color: #c8c8c8;
+    color: #b6b9c2;
     text-decoration: none;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
+    padding: 0.35rem 0.7rem;
+    border-radius: var(--r-sm);
+    font-size: 0.92rem;
+    font-weight: 500;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease;
   }
   nav a:hover {
-    background: #2a2a2a;
+    background: rgba(255, 255, 255, 0.06);
     color: #fff;
   }
   nav a.active {
-    background: #333;
+    background: rgba(255, 255, 255, 0.1);
     color: #fff;
   }
-  .topnav button {
+  .logout {
     background: transparent;
-    color: #c8c8c8;
-    border: 1px solid #444;
-    padding: 0.25rem 0.75rem;
-    border-radius: 4px;
+    color: #b6b9c2;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    padding: 0.35rem 0.8rem;
+    border-radius: var(--r-sm);
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease;
   }
-  .topnav button:hover {
-    background: #2a2a2a;
+  .logout:hover {
+    background: rgba(255, 255, 255, 0.08);
     color: #fff;
   }
-
   .content {
-    min-height: calc(100vh - 56px);
+    min-height: calc(100vh - 52px);
   }
 </style>

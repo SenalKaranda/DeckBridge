@@ -1,5 +1,6 @@
 <script lang="ts">
   import { icons as iconsApi } from '$lib/api/resources';
+  import KeyPreview from './KeyPreview.svelte';
 
   import type { Key } from '$lib/api/types';
 
@@ -12,25 +13,35 @@
 
   let { slot, keyConfig, selected, onclick }: Props = $props();
 
-  let label = $derived(keyConfig?.label ?? '');
   let iconUrl = $derived(keyConfig?.icon_id ? iconsApi.rawUrl(keyConfig.icon_id) : null);
+  let bgImageUrl = $derived(
+    keyConfig?.bg_image_id ? iconsApi.rawUrl(keyConfig.bg_image_id) : null,
+  );
 </script>
 
 <button
   type="button"
   class="tile"
   class:selected
-  class:configured={keyConfig !== null}
+  class:empty={keyConfig === null}
   onclick={() => onclick(slot)}
-  aria-label={`Key slot ${slot}${label ? `: ${label}` : ''}`}
+  aria-label={`Key ${slot + 1}${keyConfig?.label ? `: ${keyConfig.label}` : ' (empty)'}`}
 >
-  {#if iconUrl}
-    <img src={iconUrl} alt="" class="icon" loading="lazy" />
-  {/if}
-  {#if label}
-    <span class="label">{label}</span>
-  {:else if !keyConfig}
-    <span class="slot-num">{slot}</span>
+  {#if keyConfig}
+    <KeyPreview
+      label={keyConfig.label}
+      {iconUrl}
+      {bgImageUrl}
+      showIcon={keyConfig.show_icon}
+      showLabel={keyConfig.show_label}
+      bgColor={keyConfig.bg_color}
+      labelColor={keyConfig.label_color}
+      iconColor={keyConfig.icon_color}
+      fontSize={keyConfig.font_size}
+      padding={keyConfig.padding}
+    />
+  {:else}
+    <span class="plus" aria-hidden="true">+</span>
   {/if}
 </button>
 
@@ -38,50 +49,52 @@
   .tile {
     width: 100%;
     aspect-ratio: 1;
-    background: #161616;
+    padding: 0;
+    background: var(--device-key-empty);
     border: 2px solid transparent;
-    border-radius: 10px;
-    color: #888;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.25rem;
-    padding: 0.5rem;
+    border-radius: 11px;
     cursor: pointer;
-    transition: border-color 100ms ease, background 100ms ease;
     overflow: hidden;
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      border-color 0.12s ease,
+      box-shadow 0.12s ease,
+      transform 0.06s ease;
   }
   .tile:hover {
-    border-color: #444;
+    border-color: var(--device-edge);
   }
-  .tile.configured {
-    background: #1d1d1d;
-    color: #f1f1f1;
+  .tile.empty {
+    border-style: dashed;
+    border-color: #2b2d35;
+  }
+  .tile.empty:hover {
+    border-color: #3c3f49;
+  }
+  .tile:active {
+    transform: translateY(0.5px);
   }
   .tile.selected {
-    border-color: #4c8bf5;
-    background: #232f47;
+    border-color: var(--accent);
+    border-style: solid;
+    box-shadow: 0 0 0 3px var(--accent-ring);
   }
-  .icon {
-    width: 60%;
-    height: 60%;
-    object-fit: contain;
-    image-rendering: -webkit-optimize-contrast;
+  .tile:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-ring);
   }
-  .label {
-    font-size: 0.75rem;
-    line-height: 1.1;
-    text-align: center;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .plus {
+    color: #3a3d47;
+    font-size: 1.4rem;
+    font-weight: 300;
+    line-height: 1;
+    transition: color 0.12s ease;
   }
-  .slot-num {
-    font-size: 0.75rem;
-    color: #555;
-    font-variant-numeric: tabular-nums;
+  .tile.empty:hover .plus {
+    color: #5a5e6b;
   }
 </style>

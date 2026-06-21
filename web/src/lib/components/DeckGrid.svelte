@@ -37,12 +37,16 @@
 <style>
   .grid {
     display: grid;
-    gap: 0.625rem;
+    gap: 0.6rem;
     width: 100%;
     max-width: 30rem;
-    background: #0a0a0a;
-    padding: 0.75rem;
-    border-radius: 14px;
-    border: 1px solid #222;
+    background:
+      radial-gradient(120% 120% at 50% 0%, #16171c 0%, var(--device-bg) 70%);
+    padding: 0.9rem;
+    border-radius: var(--r-xl);
+    border: 1px solid #000;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      var(--shadow-md);
   }
 </style>

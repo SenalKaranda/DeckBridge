@@ -2,6 +2,7 @@
   import { ApiError } from '$lib/api/client';
   import { icons as iconsApi, keys as keysApi } from '$lib/api/resources';
   import IconPicker from './IconPicker.svelte';
+  import KeyPreview from './KeyPreview.svelte';
 
   import type {
     Key,
@@ -31,23 +32,19 @@
   // the parent uses `{#key (pageId, slot)}` to force a fresh remount when
   // the user clicks a different slot, so we never need a $effect-based
   // re-init. (An effect would also fire when the parent updates its
-  // `keys` array after a successful save, which would wipe the "Saved."
-  // confirmation message — see the editor +page.svelte for context.)
+  // `keys` array after a successful save, which would wipe the saved
+  // confirmation toast — see the editor +page.svelte for context.)
   //
   // svelte-ignore state_referenced_locally — capturing only the initial
   // values of these props is exactly what we want here (see above).
   //
   // $state.snapshot() unwraps the reactive Proxy that $props() puts
   // around `initial` so we can safely deep-copy it into our own $state.
-  // structuredClone(proxy) throws "Proxy object could not be cloned",
-  // which previously aborted KeyEditor's script for any non-empty slot
-  // and left the form half-initialized + non-interactive.
   const initialData = initial ?? emptyKey(pageId, slot);
   let label = $state(initialData.label);
   let iconId = $state<string | null>(initialData.icon_id);
   let padding = $state(initialData.padding);
 
-  // v1.1 presentation knobs.
   let showIcon = $state(initialData.show_icon);
   let showLabel = $state(initialData.show_label);
   let bgColor = $state(initialData.bg_color);
@@ -79,14 +76,81 @@
   let deleting = $state(false);
   let testing = $state(false);
   let message = $state<string | null>(null);
-  let pickerOpen = $state(false);
-  // The IconPicker is reused for both foreground and background image
-  // selection; this flag tells onSelect which target to update.
-  let pickerTarget = $state<'icon' | 'bg'>('icon');
+  let messageKind = $state<'success' | 'error' | 'info'>('info');
 
-  function openPickerFor(target: 'icon' | 'bg') {
+  // ---- live preview ----
+  let iconUrl = $derived(iconId ? iconsApi.rawUrl(iconId) : null);
+  let bgImageUrl = $derived(bgImageId ? iconsApi.rawUrl(bgImageId) : null);
+  let previewIconColor = $derived(iconTintEnabled ? iconColor : null);
+  let otherPages = $derived(pages.filter((p) => p.id !== pageId));
+
+  // ---- icon picker (shared for foreground / background / state rows) ----
+  type PickerTarget =
+    | { kind: 'icon' }
+    | { kind: 'bg' }
+    | { kind: 'map'; index: number }
+    | { kind: 'default' };
+
+  let pickerOpen = $state(false);
+  let pickerTarget = $state<PickerTarget>({ kind: 'icon' });
+
+  function openPicker(target: PickerTarget) {
     pickerTarget = target;
     pickerOpen = true;
+  }
+
+  let pickerSelectedId = $derived.by(() => {
+    switch (pickerTarget.kind) {
+      case 'icon':
+        return iconId;
+      case 'bg':
+        return bgImageId;
+      case 'map':
+        return mapRows[pickerTarget.index]?.iconId || null;
+      case 'default':
+        return stateSub.default_icon_id;
+    }
+  });
+
+  function handlePick(id: string | null) {
+    switch (pickerTarget.kind) {
+      case 'icon':
+        iconId = id;
+        break;
+      case 'bg':
+        bgImageId = id;
+        break;
+      case 'map': {
+        const i = pickerTarget.index;
+        mapRows = mapRows.map((r, idx) => (idx === i ? { ...r, iconId: id ?? '' } : r));
+        break;
+      }
+      case 'default':
+        stateSub.default_icon_id = id;
+        break;
+    }
+    pickerOpen = false;
+  }
+
+  // ---- press action options (friendly framing of the schema's types) ----
+  const ACTION_OPTIONS: {
+    type: PressActionType;
+    title: string;
+    desc: string;
+  }[] = [
+    { type: 'mqtt_publish', title: 'Send a command', desc: 'Publish an MQTT message' },
+    { type: 'http_webhook', title: 'Call a web service', desc: 'Fire an HTTP request' },
+    { type: 'page_switch', title: 'Switch page', desc: 'Jump to another page' },
+    { type: 'no_op', title: 'Nothing', desc: 'Just a label or status' },
+  ];
+
+  const METHODS = ['GET', 'POST', 'PUT', 'DELETE'] as const;
+
+  // Assigning inside the {#if press.type === 'http_webhook'} block from a
+  // closure loses TS's control-flow narrowing of the `press` union, so the
+  // type guard has to live in a function the assignment can narrow within.
+  function setMethod(m: (typeof METHODS)[number]) {
+    if (press.type === 'http_webhook') press.method = m;
   }
 
   function setActionType(t: PressActionType) {
@@ -94,13 +158,7 @@
     else if (t === 'mqtt_publish')
       press = { type: 'mqtt_publish', topic: '', payload: '', retain: false, qos: 0 };
     else if (t === 'http_webhook')
-      press = {
-        type: 'http_webhook',
-        url: '',
-        method: 'POST',
-        headers: {},
-        body: '',
-      };
+      press = { type: 'http_webhook', url: '', method: 'POST', headers: {}, body: '' };
     else if (t === 'page_switch') press = { type: 'page_switch', target_page_id: '' };
   }
 
@@ -125,6 +183,11 @@
     };
   }
 
+  function flash(text: string, kind: 'success' | 'error' | 'info') {
+    message = text;
+    messageKind = kind;
+  }
+
   async function save() {
     saving = true;
     message = null;
@@ -143,10 +206,10 @@
         icon_color: iconTintEnabled ? iconColor : null,
         font_size: fontSize,
       });
-      message = 'Saved.';
+      flash('Saved to your deck.', 'success');
       onSaved(saved);
     } catch (err) {
-      message = err instanceof ApiError ? err.detail : String(err);
+      flash(err instanceof ApiError ? err.detail : String(err), 'error');
     } finally {
       saving = false;
     }
@@ -154,377 +217,518 @@
 
   async function testPress() {
     if (!initial) {
-      message = 'Save the key first, then test it.';
+      flash('Save the key first, then try it.', 'info');
       return;
     }
     testing = true;
     message = null;
     try {
       const result = await keysApi.testPress(pageId, slot);
-      message = `Test fired (${result.action_type}) on deck ${result.deck_serial}.`;
+      flash(`Done — ${friendlyAction(result.action_type)} fired.`, 'success');
     } catch (err) {
-      message = err instanceof ApiError ? err.detail : String(err);
+      flash(err instanceof ApiError ? err.detail : String(err), 'error');
     } finally {
       testing = false;
     }
   }
 
+  function friendlyAction(type: string): string {
+    return (
+      ACTION_OPTIONS.find((o) => o.type === type)?.title.toLowerCase() ?? 'the action'
+    );
+  }
+
   async function clearKey() {
     if (!initial) {
-      // Nothing to delete; just reset the form.
-      label = '';
-      iconId = null;
-      padding = 0;
-      showIcon = true;
-      showLabel = true;
-      bgColor = '#000000';
-      bgImageId = null;
-      labelColor = '#FFFFFF';
+      // Nothing saved yet — just reset the form to empty defaults.
+      const blank = emptyKey(pageId, slot);
+      label = blank.label;
+      iconId = blank.icon_id;
+      padding = blank.padding;
+      showIcon = blank.show_icon;
+      showLabel = blank.show_label;
+      bgColor = blank.bg_color;
+      bgImageId = blank.bg_image_id;
+      labelColor = blank.label_color;
       iconTintEnabled = false;
       iconColor = '#FFFFFF';
-      fontSize = 14;
+      fontSize = blank.font_size;
       press = defaultPressAction();
       stateEnabled = false;
+      stateSub = defaultStateSubscription();
       mapRows = [];
+      flash('Form reset.', 'info');
       return;
     }
+    if (!confirm('Clear this key? It will be removed from the deck.')) return;
     deleting = true;
     message = null;
     try {
       await keysApi.remove(pageId, slot);
       onDeleted();
     } catch (err) {
-      message = err instanceof ApiError ? err.detail : String(err);
+      flash(err instanceof ApiError ? err.detail : String(err), 'error');
     } finally {
       deleting = false;
     }
   }
+
+  let busy = $derived(saving || deleting || testing);
 </script>
 
-<div class="editor">
-  <header>
-    <h2>Slot {slot}</h2>
-    <span class="muted">{initial ? 'Edit' : 'Empty — fill out below to configure'}</span>
-  </header>
+{#snippet actionIcon(type: PressActionType)}
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    {#if type === 'mqtt_publish'}
+      <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />
+    {:else if type === 'http_webhook'}
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3c2.5 2.5 3.5 5.6 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.6-3.5-9s1-6.5 3.5-9Z" />
+    {:else if type === 'page_switch'}
+      <path d="m12 3 9 5-9 5-9-5 9-5Z" />
+      <path d="m3 13 9 5 9-5" />
+    {:else}
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12h8" />
+    {/if}
+  </svg>
+{/snippet}
 
-  <div class="grid">
-    <label class="full">
-      <span>Label</span>
-      <input bind:value={label} maxlength="32" placeholder="e.g. Kitchen" />
-    </label>
-
-    <!-- Icon row: picker + show toggle + tint -->
-    <div class="full">
-      <div class="row-with-toggle">
-        <span class="caption">Icon</span>
-        <label class="checkbox inline">
-          <input type="checkbox" bind:checked={showIcon} />
-          <span>Show icon</span>
-        </label>
-      </div>
-      <div class="icon-row">
-        {#if iconId}
-          <img class="preview" src={iconsApi.rawUrl(iconId)} alt="selected icon" />
-          <code class="muted">{iconId}</code>
-        {:else}
-          <span class="muted">no icon selected</span>
-        {/if}
-        <button type="button" onclick={() => openPickerFor('icon')}>Choose…</button>
-        {#if iconId}
-          <button type="button" class="link" onclick={() => (iconId = null)}>Clear</button>
-        {/if}
-      </div>
-      {#if showIcon}
-        <label class="color-row">
-          <input type="checkbox" bind:checked={iconTintEnabled} />
-          <span>Tint icon</span>
-          <input
-            type="color"
-            bind:value={iconColor}
-            disabled={!iconTintEnabled}
-            aria-label="Icon tint color"
-          />
-          <code class="muted small">{iconTintEnabled ? iconColor : '(none)'}</code>
-        </label>
-        <p class="muted small hint-line">
-          Multiplies the icon's pixels by this color. Best on the bundled
-          white icons; will recolor an already-colored uploaded icon.
-        </p>
-      {/if}
+<div class="editor card">
+  <!-- Live preview header -->
+  <div class="head">
+    <div class="head-preview">
+      <KeyPreview
+        {label}
+        {iconUrl}
+        {bgImageUrl}
+        {showIcon}
+        {showLabel}
+        {bgColor}
+        {labelColor}
+        iconColor={previewIconColor}
+        {fontSize}
+        {padding}
+        size={104}
+      />
     </div>
-
-    <!-- Label color (only shown when label is shown) -->
-    <div class="full">
-      <div class="row-with-toggle">
-        <span class="caption">Label appearance</span>
-        <label class="checkbox inline">
-          <input type="checkbox" bind:checked={showLabel} />
-          <span>Show label</span>
-        </label>
-      </div>
-      {#if showLabel}
-        <label class="color-row">
-          <span>Color</span>
-          <input
-            type="color"
-            bind:value={labelColor}
-            aria-label="Label text color"
-          />
-          <code class="muted small">{labelColor}</code>
-        </label>
-        <label class="padding-row">
-          <span>Font size</span>
-          <input
-            type="range"
-            min="8"
-            max="32"
-            step="1"
-            bind:value={fontSize}
-            aria-label="Label font size in pixels"
-          />
-          <input
-            type="number"
-            min="8"
-            max="32"
-            step="1"
-            bind:value={fontSize}
-            class="padding-num"
-          />
-          <span class="muted small">px</span>
-        </label>
-        <p class="muted small hint-line">
-          Lower values let longer labels fit. Padding doesn't shrink the
-          font automatically — use this to compensate.
-        </p>
-      {/if}
-    </div>
-
-    <!-- Background color + image -->
-    <div class="full">
-      <span class="caption">Background</span>
-      <label class="color-row">
-        <span>Color</span>
-        <input
-          type="color"
-          bind:value={bgColor}
-          aria-label="Background color"
-        />
-        <code class="muted small">{bgColor}</code>
-      </label>
-      <div class="icon-row">
-        {#if bgImageId}
-          <img
-            class="preview"
-            src={iconsApi.rawUrl(bgImageId)}
-            alt="selected background"
-          />
-          <code class="muted">{bgImageId}</code>
-        {:else}
-          <span class="muted">no background image</span>
-        {/if}
-        <button type="button" onclick={() => openPickerFor('bg')}>Choose…</button>
-        {#if bgImageId}
-          <button type="button" class="link" onclick={() => (bgImageId = null)}>
-            Clear
-          </button>
-        {/if}
-      </div>
-      <p class="muted small hint-line">
-        The background image is drawn over the color and under the icon,
-        scaled to fill the key.
-      </p>
-    </div>
-
-    <!-- Padding -->
-    <div class="full">
-      <label class="padding-row">
-        <span>Padding</span>
-        <input
-          type="range"
-          min="0"
-          max="20"
-          step="1"
-          bind:value={padding}
-          aria-label="Padding around key content (0 = no extra inset)"
-        />
-        <input
-          type="number"
-          min="0"
-          max="20"
-          step="1"
-          bind:value={padding}
-          class="padding-num"
-        />
-        <span class="muted small">px</span>
-      </label>
-      <p class="muted small hint-line">
-        Extra inset around the icon and label. Increase if the icon feels
-        cropped against the key edge.
-      </p>
-    </div>
-
-    <div class="full">
-      <span class="caption">Press action</span>
-      <select
-        value={press.type}
-        onchange={(e) => setActionType((e.currentTarget as HTMLSelectElement).value as PressActionType)}
-      >
-        <option value="no_op">Do nothing</option>
-        <option value="mqtt_publish">Publish MQTT message</option>
-        <option value="http_webhook">Fire HTTP request</option>
-        <option value="page_switch">Switch to another page</option>
-      </select>
-
-      {#if press.type === 'mqtt_publish'}
-        <div class="sub">
-          <label>
-            <span>Topic</span>
-            <input bind:value={press.topic} placeholder="home/kitchen/light/set" />
-          </label>
-          <label>
-            <span>Payload</span>
-            <input bind:value={press.payload} placeholder="ON / TOGGLE / JSON…" />
-          </label>
-          <label class="checkbox">
-            <input type="checkbox" bind:checked={press.retain} />
-            <span>Retain</span>
-          </label>
-          <label>
-            <span>QoS</span>
-            <select bind:value={press.qos}>
-              <option value={0}>0</option>
-              <option value={1}>1</option>
-              <option value={2}>2</option>
-            </select>
-          </label>
-        </div>
-      {:else if press.type === 'http_webhook'}
-        <div class="sub">
-          <label>
-            <span>URL</span>
-            <input bind:value={press.url} placeholder="http://host:port/path" />
-          </label>
-          <label>
-            <span>Method</span>
-            <select bind:value={press.method}>
-              <option value="GET">GET</option>
-              <option value="POST">POST</option>
-              <option value="PUT">PUT</option>
-              <option value="DELETE">DELETE</option>
-            </select>
-          </label>
-          <label>
-            <span>Body (sent for POST/PUT)</span>
-            <textarea bind:value={press.body} rows="3"></textarea>
-          </label>
-        </div>
-      {:else if press.type === 'page_switch'}
-        <div class="sub">
-          <label>
-            <span>Target page</span>
-            <select bind:value={press.target_page_id}>
-              <option value="" disabled>— pick a page —</option>
-              {#each pages.filter((p) => p.id !== pageId) as p (p.id)}
-                <option value={p.id}>{p.name || `(unnamed) ${p.id.slice(0, 8)}`}</option>
-              {/each}
-            </select>
-          </label>
-        </div>
-      {/if}
-    </div>
-
-    <div class="full">
-      <label class="checkbox">
-        <input type="checkbox" bind:checked={stateEnabled} />
-        <span>Subscribe to MQTT state and update the key icon based on incoming values</span>
-      </label>
-
-      {#if stateEnabled}
-        <div class="sub">
-          <label>
-            <span>State topic</span>
-            <input bind:value={stateSub.topic} placeholder="home/kitchen/light/state" />
-          </label>
-          <label>
-            <span>JMESPath (optional, for JSON payloads)</span>
-            <input bind:value={stateSub.jmespath} placeholder="state.power" />
-          </label>
-
-          <div class="caption row">
-            <span>Value → icon</span>
-            <button type="button" class="link" onclick={addMapRow}>+ Add row</button>
-          </div>
-          {#if mapRows.length === 0}
-            <p class="muted small">No mappings — every value uses the default icon below.</p>
-          {/if}
-          {#each mapRows as row, i (i)}
-            <div class="map-row">
-              <input placeholder="value (e.g. on)" bind:value={row.value} />
-              <input
-                placeholder="icon id (e.g. lucide:lightbulb)"
-                bind:value={row.iconId}
-              />
-              <button type="button" class="link danger" onclick={() => removeMapRow(i)}>
-                Remove
-              </button>
-            </div>
-          {/each}
-
-          <label>
-            <span>Default icon (used when no value matches)</span>
-            <input
-              bind:value={stateSub.default_icon_id}
-              placeholder="lucide:circle-x"
-            />
-          </label>
-        </div>
-      {/if}
+    <div class="head-meta">
+      <h2>{label.trim() || `Key ${slot + 1}`}</h2>
+      <p class="muted small">{initial ? 'Editing' : 'Setting up'} key {slot + 1}</p>
     </div>
   </div>
 
-  {#if message}
-    <p class="message">{message}</p>
-  {/if}
+  <!-- LOOK -->
+  <section class="group">
+    <h3 class="group-title">Look</h3>
 
-  <div class="actions">
-    <button
-      type="button"
-      class="primary"
-      onclick={save}
-      disabled={saving || deleting || testing}
-    >
-      {saving ? 'Saving…' : 'Save'}
-    </button>
-    <button
-      type="button"
-      onclick={testPress}
-      disabled={saving || deleting || testing || !initial}
-      title={initial ? 'Fire the configured action without a physical key press' : 'Save the key first to enable testing'}
-    >
-      {testing ? 'Testing…' : 'Test press'}
-    </button>
-    <button
-      type="button"
-      class="danger"
-      onclick={clearKey}
-      disabled={saving || deleting || testing}
-    >
-      {deleting ? 'Clearing…' : initial ? 'Clear slot' : 'Reset form'}
-    </button>
+    <div class="field">
+      <label class="field-label" for="key-label">Label</label>
+      <input
+        id="key-label"
+        class="control"
+        bind:value={label}
+        maxlength="32"
+        placeholder="e.g. Kitchen"
+      />
+    </div>
+
+    <div class="field">
+      <div class="label-row">
+        <span class="field-label">Icon</span>
+        <label class="switch">
+          <input type="checkbox" bind:checked={showIcon} />
+          <span class="track"><span class="thumb"></span></span>
+          <span class="switch-text">Show</span>
+        </label>
+      </div>
+      <div class="picker-row">
+        <button
+          type="button"
+          class="icon-pick"
+          onclick={() => openPicker({ kind: 'icon' })}
+          aria-label="Choose icon"
+        >
+          {#if iconUrl}
+            <img src={iconUrl} alt="" />
+          {:else}
+            <span class="plus">+</span>
+          {/if}
+        </button>
+        <div class="picker-actions">
+          <button
+            type="button"
+            class="btn btn--ghost btn--sm"
+            onclick={() => openPicker({ kind: 'icon' })}
+          >
+            {iconId ? 'Change…' : 'Choose icon…'}
+          </button>
+          {#if iconId}
+            <button
+              type="button"
+              class="btn btn--subtle btn--sm"
+              onclick={() => (iconId = null)}
+            >
+              Remove
+            </button>
+          {/if}
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <span class="field-label">Background</span>
+      <div class="bg-row">
+        <input
+          type="color"
+          class="swatch"
+          bind:value={bgColor}
+          aria-label="Background color"
+        />
+        <span class="hexcode">{bgColor}</span>
+        <span class="spacer"></span>
+        <button
+          type="button"
+          class="btn btn--ghost btn--sm"
+          onclick={() => openPicker({ kind: 'bg' })}
+        >
+          {bgImageId ? 'Change image…' : 'Add image…'}
+        </button>
+        {#if bgImageId}
+          <button
+            type="button"
+            class="btn btn--subtle btn--sm"
+            onclick={() => (bgImageId = null)}
+          >
+            Remove
+          </button>
+        {/if}
+      </div>
+    </div>
+
+    <details class="adv">
+      <summary>Fine-tune appearance</summary>
+      <div class="adv-body">
+        <label class="switch">
+          <input type="checkbox" bind:checked={showLabel} />
+          <span class="track"><span class="thumb"></span></span>
+          <span class="switch-text">Show label</span>
+        </label>
+
+        <div class="field">
+          <span class="field-label">Label color</span>
+          <div class="color-inline">
+            <input
+              type="color"
+              class="swatch"
+              bind:value={labelColor}
+              aria-label="Label color"
+            />
+            <span class="hexcode">{labelColor}</span>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">Label size <span class="val">{fontSize}px</span></span>
+          <input type="range" min="8" max="32" step="1" bind:value={fontSize} />
+        </div>
+
+        {#if showIcon}
+          <div class="field">
+            <label class="switch">
+              <input type="checkbox" bind:checked={iconTintEnabled} />
+              <span class="track"><span class="thumb"></span></span>
+              <span class="switch-text">Tint icon</span>
+            </label>
+            {#if iconTintEnabled}
+              <div class="color-inline">
+                <input
+                  type="color"
+                  class="swatch"
+                  bind:value={iconColor}
+                  aria-label="Icon tint color"
+                />
+                <span class="hexcode">{iconColor}</span>
+              </div>
+            {/if}
+            <p class="help">Recolors the icon. Looks best on the bundled white icons.</p>
+          </div>
+        {/if}
+
+        <div class="field">
+          <span class="field-label">Padding <span class="val">{padding}px</span></span>
+          <input type="range" min="0" max="20" step="1" bind:value={padding} />
+          <p class="help">Extra space around the icon and label.</p>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- WHEN PRESSED -->
+  <section class="group">
+    <h3 class="group-title">When pressed</h3>
+    <div class="actions-grid">
+      {#each ACTION_OPTIONS as opt (opt.type)}
+        <button
+          type="button"
+          class="action-card"
+          class:active={press.type === opt.type}
+          onclick={() => setActionType(opt.type)}
+        >
+          <span class="action-ico">{@render actionIcon(opt.type)}</span>
+          <span class="action-txt">
+            <strong>{opt.title}</strong>
+            <small>{opt.desc}</small>
+          </span>
+        </button>
+      {/each}
+    </div>
+
+    {#if press.type === 'mqtt_publish'}
+      <div class="detail">
+        <div class="field">
+          <label class="field-label" for="mq-topic">Topic</label>
+          <input
+            id="mq-topic"
+            class="control"
+            bind:value={press.topic}
+            placeholder="home/kitchen/light/set"
+          />
+          <p class="help">Where the message is published.</p>
+        </div>
+        <div class="field">
+          <label class="field-label" for="mq-payload">Message</label>
+          <input
+            id="mq-payload"
+            class="control"
+            bind:value={press.payload}
+            placeholder="ON · TOGGLE · or JSON"
+          />
+          <p class="help">What to send. Plain text or a JSON string.</p>
+        </div>
+        <details class="adv">
+          <summary>Advanced</summary>
+          <div class="adv-body">
+            <label class="switch">
+              <input type="checkbox" bind:checked={press.retain} />
+              <span class="track"><span class="thumb"></span></span>
+              <span class="switch-text">Retain last message on the broker</span>
+            </label>
+            <div class="field">
+              <label class="field-label" for="mq-qos">Quality of service</label>
+              <select id="mq-qos" class="control" bind:value={press.qos}>
+                <option value={0}>0 — at most once</option>
+                <option value={1}>1 — at least once</option>
+                <option value={2}>2 — exactly once</option>
+              </select>
+            </div>
+          </div>
+        </details>
+      </div>
+    {:else if press.type === 'http_webhook'}
+      <div class="detail">
+        <div class="field">
+          <label class="field-label" for="hk-url">Address</label>
+          <input
+            id="hk-url"
+            class="control"
+            bind:value={press.url}
+            placeholder="http://host:port/path"
+          />
+        </div>
+        <div class="field">
+          <span class="field-label">Method</span>
+          <div class="segmented">
+            {#each METHODS as m (m)}
+              <button
+                type="button"
+                class:active={press.method === m}
+                onclick={() => setMethod(m)}
+              >
+                {m}
+              </button>
+            {/each}
+          </div>
+        </div>
+        {#if press.method === 'POST' || press.method === 'PUT'}
+          <div class="field">
+            <label class="field-label" for="hk-body">Body</label>
+            <textarea id="hk-body" class="control mono" bind:value={press.body} rows="3"
+            ></textarea>
+            <p class="help">Sent with POST and PUT requests.</p>
+          </div>
+        {/if}
+      </div>
+    {:else if press.type === 'page_switch'}
+      <div class="detail">
+        <div class="field">
+          <label class="field-label" for="ps-target">Go to page</label>
+          <select id="ps-target" class="control" bind:value={press.target_page_id}>
+            <option value="" disabled>Choose a page…</option>
+            {#each otherPages as p (p.id)}
+              <option value={p.id}>{p.name || 'Untitled page'}</option>
+            {/each}
+          </select>
+          {#if otherPages.length === 0}
+            <p class="help">There are no other pages yet — add one to switch to it.</p>
+          {/if}
+        </div>
+      </div>
+    {:else}
+      <p class="help detail-note">
+        This key won't do anything when pressed — useful as a label or a live
+        status indicator.
+      </p>
+    {/if}
+  </section>
+
+  <!-- LIVE STATUS -->
+  <section class="group">
+    <div class="group-head">
+      <div>
+        <h3 class="group-title flush">Live status</h3>
+        <p class="help">Switch this key's icon automatically based on an MQTT topic.</p>
+      </div>
+      <label class="switch">
+        <input type="checkbox" bind:checked={stateEnabled} />
+        <span class="track"><span class="thumb"></span></span>
+      </label>
+    </div>
+
+    {#if stateEnabled}
+      <div class="detail">
+        <div class="field">
+          <label class="field-label" for="st-topic">Status topic</label>
+          <input
+            id="st-topic"
+            class="control"
+            bind:value={stateSub.topic}
+            placeholder="home/kitchen/light/state"
+          />
+        </div>
+
+        <div class="field">
+          <span class="field-label">Icon for each value</span>
+          <p class="help">Pick an icon to show when a specific value comes in.</p>
+          {#each mapRows as row, i (i)}
+            <div class="map-row">
+              <input class="control" placeholder="Value, e.g. on" bind:value={row.value} />
+              <button
+                type="button"
+                class="icon-pick sm"
+                onclick={() => openPicker({ kind: 'map', index: i })}
+                aria-label="Choose icon for this value"
+              >
+                {#if row.iconId}
+                  <img src={iconsApi.rawUrl(row.iconId)} alt="" />
+                {:else}
+                  <span class="plus">+</span>
+                {/if}
+              </button>
+              <button
+                type="button"
+                class="btn btn--icon btn--subtle"
+                onclick={() => removeMapRow(i)}
+                aria-label="Remove value"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
+                </svg>
+              </button>
+            </div>
+          {/each}
+          <button type="button" class="btn btn--ghost btn--sm add-row" onclick={addMapRow}>
+            + Add value
+          </button>
+        </div>
+
+        <div class="field">
+          <span class="field-label">Fallback icon</span>
+          <p class="help">Shown when the value doesn't match any above.</p>
+          <button
+            type="button"
+            class="icon-pick"
+            onclick={() => openPicker({ kind: 'default' })}
+            aria-label="Choose fallback icon"
+          >
+            {#if stateSub.default_icon_id}
+              <img src={iconsApi.rawUrl(stateSub.default_icon_id)} alt="" />
+            {:else}
+              <span class="plus">+</span>
+            {/if}
+          </button>
+        </div>
+
+        <details class="adv">
+          <summary>Advanced</summary>
+          <div class="adv-body">
+            <div class="field">
+              <label class="field-label" for="st-path">Read value from JSON</label>
+              <input
+                id="st-path"
+                class="control mono"
+                bind:value={stateSub.jmespath}
+                placeholder="state.power"
+              />
+              <p class="help">
+                Optional JMESPath for JSON payloads — e.g. <code>state.power</code>.
+              </p>
+            </div>
+          </div>
+        </details>
+      </div>
+    {/if}
+  </section>
+
+  <!-- FOOTER -->
+  <div class="foot">
+    <div class="foot-msg" aria-live="polite">
+      {#if message}
+        <span class="toast toast--{messageKind}">{message}</span>
+      {/if}
+    </div>
+    <div class="foot-btns">
+      <button type="button" class="btn btn--danger" onclick={clearKey} disabled={busy}>
+        {deleting ? 'Clearing…' : initial ? 'Clear key' : 'Reset'}
+      </button>
+      <button
+        type="button"
+        class="btn btn--ghost"
+        onclick={testPress}
+        disabled={busy || !initial}
+        title={initial
+          ? 'Fire the action now without pressing the physical key'
+          : 'Save the key first to try it'}
+      >
+        {testing ? 'Testing…' : 'Test'}
+      </button>
+      <button type="button" class="btn btn--primary" onclick={save} disabled={busy}>
+        {saving ? 'Saving…' : 'Save key'}
+      </button>
+    </div>
   </div>
 </div>
 
 <IconPicker
   open={pickerOpen}
-  selectedIconId={pickerTarget === 'icon' ? iconId : bgImageId}
-  onSelect={(id) => {
-    if (pickerTarget === 'icon') {
-      iconId = id;
-    } else {
-      bgImageId = id;
-    }
-    pickerOpen = false;
-  }}
+  selectedIconId={pickerSelectedId}
+  onSelect={handlePick}
   onClose={() => (pickerOpen = false)}
 />
 
@@ -532,198 +736,363 @@
   .editor {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    background: #fff;
-    border-radius: 8px;
-    padding: 1.25rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    padding: 0;
+    overflow: hidden;
   }
-  header {
+
+  /* ---- header with live preview ---- */
+  .head {
     display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.1rem 1.25rem;
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+    border-bottom: 1px solid var(--border);
   }
-  h2 {
+  .head-preview {
+    width: 104px;
+    height: 104px;
+    flex: none;
+    padding: 8px;
+    border-radius: var(--r-lg);
+    background:
+      radial-gradient(120% 120% at 50% 0%, #16171c 0%, var(--device-bg) 70%);
+    box-shadow: var(--shadow-sm);
+  }
+  .head-meta h2 {
     margin: 0;
-    font-size: 1.125rem;
-  }
-  .muted {
-    color: #777;
-    font-size: 0.875rem;
+    font-size: 1.15rem;
+    word-break: break-word;
   }
   .small {
-    font-size: 0.8125rem;
+    font-size: 0.85rem;
   }
-  .grid {
+
+  /* ---- sections ---- */
+  .group {
+    padding: 1.1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    gap: 0.875rem;
+    gap: 0.85rem;
   }
-  label {
+  .group-title {
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 650;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .group-title.flush {
+    margin: 0;
+  }
+  .group-head {
     display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
   }
-  label.checkbox {
-    flex-direction: row;
-    align-items: center;
-    gap: 0.5rem;
+  .group-head .help {
+    margin-top: 0.15rem;
   }
-  label span,
-  .caption {
-    font-size: 0.875rem;
-    color: #444;
-  }
-  .full {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-  input,
-  select,
-  textarea {
-    padding: 0.4rem 0.625rem;
-    border: 1px solid #d0d0d0;
-    border-radius: 6px;
-    font: inherit;
-  }
-  textarea {
-    font-family: 'Inter', monospace;
-    font-size: 0.875rem;
-  }
-  input:focus,
-  select:focus,
-  textarea:focus {
-    outline: 2px solid #4c8bf5;
-    outline-offset: -1px;
-    border-color: #4c8bf5;
-  }
-  .icon-row {
+
+  .label-row {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
+    justify-content: space-between;
+    gap: 0.75rem;
   }
-  .preview {
-    width: 32px;
-    height: 32px;
-    background: #1d1d1d;
-    border-radius: 6px;
-    padding: 4px;
+  .val {
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  /* ---- icon picker button ---- */
+  .picker-row {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+  }
+  .picker-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .icon-pick {
+    width: 52px;
+    height: 52px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      radial-gradient(120% 120% at 50% 0%, #16171c 0%, var(--device-bg) 70%);
+    border: 1px solid var(--device-edge);
+    border-radius: var(--r-md);
+    cursor: pointer;
+    overflow: hidden;
+    transition:
+      border-color 0.12s ease,
+      box-shadow 0.12s ease;
+  }
+  .icon-pick.sm {
+    width: 42px;
+    height: 42px;
+  }
+  .icon-pick:hover {
+    border-color: var(--accent);
+  }
+  .icon-pick:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-ring);
+  }
+  .icon-pick img {
+    width: 72%;
+    height: 72%;
     object-fit: contain;
   }
-  .sub {
+  .icon-pick .plus {
+    color: #5a5e6b;
+    font-size: 1.3rem;
+    font-weight: 300;
+  }
+
+  /* ---- color swatch + hex ---- */
+  .bg-row,
+  .color-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .spacer {
+    flex: 1;
+  }
+  .swatch {
+    width: 2.3rem;
+    height: 2.3rem;
+    flex: none;
+    padding: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-sm);
+    background: none;
+    cursor: pointer;
+  }
+  .swatch::-webkit-color-swatch-wrapper {
+    padding: 3px;
+  }
+  .swatch::-webkit-color-swatch {
+    border: none;
+    border-radius: 4px;
+  }
+  .hexcode {
+    font-family: ui-monospace, 'Cascadia Code', monospace;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+
+  /* ---- advanced disclosure ---- */
+  .adv {
+    border-top: 1px dashed var(--border);
+    padding-top: 0.5rem;
+  }
+  .adv > summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 550;
+    color: var(--accent);
+    list-style: none;
+    padding: 0.15rem 0;
+    user-select: none;
+  }
+  .adv > summary::-webkit-details-marker {
+    display: none;
+  }
+  .adv > summary::before {
+    content: '▸';
+    display: inline-block;
+    margin-right: 0.4rem;
+    transition: transform 0.12s ease;
+    font-size: 0.7rem;
+  }
+  .adv[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  .adv-body {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    background: #f7f7f7;
-    border-radius: 6px;
-    margin-top: 0.25rem;
+    gap: 0.85rem;
+    padding-top: 0.75rem;
   }
+
+  /* ---- action cards ---- */
+  .actions-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+  }
+  .action-card {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    text-align: left;
+    padding: 0.7rem 0.8rem;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    cursor: pointer;
+    transition:
+      border-color 0.12s ease,
+      background 0.12s ease,
+      box-shadow 0.12s ease;
+  }
+  .action-card:hover {
+    border-color: var(--accent);
+  }
+  .action-card.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .action-ico {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+    color: var(--text-muted);
+  }
+  .action-card.active .action-ico {
+    background: #fff;
+    color: var(--accent);
+  }
+  .action-ico svg {
+    width: 19px;
+    height: 19px;
+  }
+  .action-txt {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+  .action-txt strong {
+    font-weight: 600;
+    font-size: 0.92rem;
+  }
+  .action-txt small {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+
+  /* ---- per-action detail ---- */
+  .detail {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    padding: 0.95rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+  }
+  .detail-note {
+    margin: 0;
+    padding: 0.4rem 0.1rem 0;
+  }
+  .mono {
+    font-family: ui-monospace, 'Cascadia Code', monospace;
+    font-size: 0.86rem;
+  }
+
+  /* segmented control (HTTP method) */
+  .segmented {
+    display: inline-flex;
+    background: var(--surface-3);
+    border-radius: var(--r-sm);
+    padding: 3px;
+    gap: 3px;
+    align-self: flex-start;
+  }
+  .segmented button {
+    border: none;
+    background: transparent;
+    padding: 0.32rem 0.7rem;
+    border-radius: 5px;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 550;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .segmented button.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* state value→icon rows */
   .map-row {
     display: grid;
-    grid-template-columns: 1fr 1.4fr auto;
-    gap: 0.4rem;
-    align-items: center;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 0.25rem;
-  }
-  .link {
-    background: transparent;
-    border: none;
-    color: #4c8bf5;
-    cursor: pointer;
-    padding: 0.125rem 0.25rem;
-    font-size: 0.875rem;
-  }
-  .link:hover {
-    text-decoration: underline;
-  }
-  .link.danger {
-    color: #b00020;
-  }
-  .actions {
-    display: flex;
+    grid-template-columns: 1fr auto auto;
     gap: 0.5rem;
-    margin-top: 0.5rem;
-  }
-  .primary {
-    background: #1d1d1d;
-    color: #fff;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-  }
-  .primary:disabled {
-    background: #888;
-    cursor: not-allowed;
-  }
-  .danger {
-    background: transparent;
-    color: #b00020;
-    border: 1px solid #d0d0d0;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-  }
-  .danger:disabled {
-    color: #888;
-    cursor: not-allowed;
-  }
-  .row-with-toggle {
-    display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
   }
-  .checkbox.inline {
-    flex-direction: row;
-    align-items: center;
-    gap: 0.375rem;
+  .add-row {
+    align-self: flex-start;
   }
-  .color-row {
-    flex-direction: row;
-    align-items: center;
-    gap: 0.625rem;
-    margin-top: 0.375rem;
-  }
-  .color-row input[type='color'] {
-    width: 2.5rem;
-    height: 1.75rem;
-    padding: 0;
-    border: 1px solid #d0d0d0;
+
+  code {
+    background: var(--surface-3);
+    padding: 0.05rem 0.3rem;
     border-radius: 4px;
-    cursor: pointer;
+    font-size: 0.85em;
   }
-  .color-row input[type='color']:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
+
+  /* range inputs */
+  input[type='range'] {
+    width: 100%;
+    accent-color: var(--accent);
   }
-  .padding-row {
-    flex-direction: row;
+
+  /* ---- footer ---- */
+  .foot {
+    display: flex;
     align-items: center;
-    gap: 0.625rem;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.9rem 1.25rem;
+    background: var(--surface-2);
+    flex-wrap: wrap;
   }
-  .padding-row > span:first-child {
-    min-width: 5rem;
-  }
-  .padding-row input[type='range'] {
+  .foot-msg {
     flex: 1;
-    padding: 0;
-    border: none;
+    min-width: 0;
   }
-  .padding-num {
-    width: 3.5rem;
+  .toast {
+    display: inline-block;
+    padding: 0.35rem 0.6rem;
+    border-radius: var(--r-sm);
+    font-size: 0.85rem;
+    font-weight: 500;
   }
-  .hint-line {
-    margin: 0.25rem 0 0;
+  .toast--success {
+    background: var(--success-soft);
+    color: var(--success);
   }
-  .message {
-    color: #444;
-    margin: 0;
-    font-size: 0.875rem;
+  .toast--error {
+    background: var(--danger-soft);
+    color: var(--danger-strong);
+  }
+  .toast--info {
+    background: var(--surface-3);
+    color: var(--text-muted);
+  }
+  .foot-btns {
+    display: flex;
+    gap: 0.5rem;
   }
 </style>

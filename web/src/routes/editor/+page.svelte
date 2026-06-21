@@ -20,6 +20,7 @@
   const FALLBACK_SERIAL = 'default';
 
   let deckSerial = $state<string>(FALLBACK_SERIAL);
+  let deckModel = $state<string>('');
   let pages = $state<Page[]>([]);
   let activePageId = $state<string | null>(null);
   let keys = $state<Key[]>([]);
@@ -34,6 +35,7 @@
   let selectedKey = $derived(
     selectedSlot !== null ? (keys.find((k) => k.slot === selectedSlot) ?? null) : null,
   );
+  let connected = $derived(deckSerial !== FALLBACK_SERIAL);
 
   // ---- lifecycle ----
 
@@ -41,6 +43,7 @@
     try {
       const status = await statusApi.get();
       deckSerial = status.decks[0]?.serial ?? FALLBACK_SERIAL;
+      deckModel = status.decks[0]?.model ?? '';
       await loadPages();
     } catch (err) {
       error = err instanceof ApiError ? err.detail : String(err);
@@ -62,6 +65,7 @@
   async function selectPage(id: string) {
     activePageId = id;
     selectedSlot = null;
+    renamingPage = false;
     keys = await keysApi.listForPage(id);
     pageName = pages.find((p) => p.id === id)?.name ?? '';
   }
@@ -69,11 +73,17 @@
   async function createPage() {
     const fresh = await pagesApi.create({
       deck_serial: deckSerial,
-      name: 'New page',
+      name: `Page ${pages.length + 1}`,
       order: pages.length,
     });
     pages = [...pages, fresh];
     await selectPage(fresh.id);
+  }
+
+  function startRename() {
+    if (!activePage) return;
+    pageName = activePage.name;
+    renamingPage = true;
   }
 
   async function renamePage() {
@@ -87,7 +97,7 @@
     if (!activePage) return;
     if (
       !confirm(
-        `Delete page "${activePage.name || activePage.id.slice(0, 8)}"? Keys on it are also deleted.`,
+        `Delete "${activePage.name || 'this page'}"? Its keys are deleted too. This can't be undone.`,
       )
     ) {
       return;
@@ -98,6 +108,11 @@
     pages = pages.filter((p) => p.id !== removedId);
     if (pages.length > 0) await selectPage(pages[0].id);
     else keys = [];
+  }
+
+  // Focus a node as soon as it mounts (used for the inline rename input).
+  function autofocus(node: HTMLElement) {
+    node.focus();
   }
 
   function handleSlotClick(slot: number) {
@@ -114,73 +129,106 @@
     if (selectedSlot === null) return;
     const wasSlot = selectedSlot;
     keys = keys.filter((k) => k.slot !== wasSlot);
+    selectedSlot = null;
   }
 </script>
 
 <div class="wrap">
   <header class="page-header">
     <div>
-      <h1>Editor</h1>
-      <p class="muted">
-        Deck: <code>{deckSerial}</code>
-        {#if deckSerial === FALLBACK_SERIAL}
-          <span class="badge"
-            >no deck attached — pages here will bind to <code>default</code></span
-          >
-        {/if}
-      </p>
+      <h1>Your deck</h1>
+      <p class="muted sub">Click a key to set up what it shows and does.</p>
     </div>
+    <span
+      class="chip status"
+      class:ok={connected}
+      title={connected ? `Serial ${deckSerial}` : 'Pages bind to your deck automatically once it’s plugged in.'}
+    >
+      <span class="dot"></span>
+      {connected ? deckModel || 'Stream Deck connected' : 'No deck connected'}
+    </span>
   </header>
 
   {#if error}
-    <p class="error">{error}</p>
+    <p class="error card">{error}</p>
   {:else if loading}
-    <p class="muted">Loading…</p>
+    <p class="muted loading">Loading…</p>
   {:else}
-    <div class="page-tabs">
-      {#each pages as page (page.id)}
-        <button
-          type="button"
-          class:active={page.id === activePageId}
-          onclick={() => selectPage(page.id)}
-        >
-          {page.name || '(unnamed)'}
+    <!-- Page switcher -->
+    <div class="pagebar">
+      <div class="tabs" role="tablist">
+        {#each pages as page (page.id)}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={page.id === activePageId}
+            class="tab"
+            class:active={page.id === activePageId}
+            onclick={() => selectPage(page.id)}
+          >
+            {page.name || 'Untitled page'}
+          </button>
+        {/each}
+        <button type="button" class="tab add" onclick={createPage} title="Add a page">
+          + Page
         </button>
-      {/each}
-      <button type="button" class="add" onclick={createPage}>+ Page</button>
+      </div>
+
+      {#if activePage}
+        <div class="page-tools">
+          {#if renamingPage}
+            <input
+              class="control rename"
+              bind:value={pageName}
+              placeholder="Page name"
+              onkeydown={(e) => {
+                if (e.key === 'Enter') renamePage();
+                if (e.key === 'Escape') renamingPage = false;
+              }}
+              use:autofocus
+            />
+            <button type="button" class="btn btn--primary btn--sm" onclick={renamePage}>
+              Save
+            </button>
+            <button
+              type="button"
+              class="btn btn--subtle btn--sm"
+              onclick={() => (renamingPage = false)}
+            >
+              Cancel
+            </button>
+          {:else}
+            <button
+              type="button"
+              class="btn btn--subtle btn--sm"
+              onclick={startRename}
+              title="Rename page"
+            >
+              Rename
+            </button>
+            <button
+              type="button"
+              class="btn btn--danger btn--sm"
+              onclick={deletePage}
+              title="Delete page"
+            >
+              Delete
+            </button>
+          {/if}
+        </div>
+      {/if}
     </div>
 
-    {#if activePage}
-      <div class="page-controls">
-        {#if renamingPage}
-          <input
-            bind:value={pageName}
-            placeholder="Page name"
-            onkeydown={(e) => e.key === 'Enter' && renamePage()}
-          />
-          <button type="button" onclick={renamePage}>Save</button>
-          <button type="button" class="link" onclick={() => (renamingPage = false)}>
-            Cancel
-          </button>
-        {:else}
-          <span class="muted">Page id <code>{activePage.id.slice(0, 8)}…</code></span>
-          <button type="button" class="link" onclick={() => (renamingPage = true)}>
-            Rename
-          </button>
-          <button type="button" class="link danger" onclick={deletePage}>Delete</button>
-        {/if}
-      </div>
-    {/if}
-
     <div class="layout">
-      <section class="grid-pane">
+      <section class="device-panel">
         {#if activePage}
           <DeckGrid {keys} {selectedSlot} onSlotClick={handleSlotClick} />
+          <p class="device-caption">Live preview — matches what's on the device.</p>
         {:else}
-          <div class="empty">
+          <div class="empty card">
             <p class="muted">No pages yet for this deck.</p>
-            <button type="button" class="primary" onclick={createPage}>
-              Create the first page
+            <button type="button" class="btn btn--primary" onclick={createPage}>
+              Create your first page
             </button>
           </div>
         {/if}
@@ -207,7 +255,26 @@
             />
           {/key}
         {:else if activePage}
-          <p class="muted hint">Click a slot in the grid to edit it.</p>
+          <div class="hint card">
+            <div class="hint-art" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M7 9h.01M12 9h.01M17 9h.01M7 14h.01M12 14h5" />
+              </svg>
+            </div>
+            <h3>Pick a key to begin</h3>
+            <p class="muted">
+              Select any key on the left, then give it a label, an icon, and an
+              action.
+            </p>
+          </div>
         {/if}
       </section>
     </div>
@@ -216,141 +283,176 @@
 
 <style>
   .wrap {
-    max-width: 76rem;
-    margin: 1.5rem auto;
+    max-width: 72rem;
+    margin: 1.75rem auto;
     padding: 0 1.5rem 4rem;
   }
   .page-header {
-    margin-bottom: 1rem;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
   }
   h1 {
-    margin: 0 0 0.125rem;
+    margin: 0 0 0.2rem;
+    font-size: 1.6rem;
   }
-  .muted {
-    color: #666;
+  .sub {
     margin: 0;
   }
   .error {
-    color: #b00020;
+    color: var(--danger-strong);
+    background: var(--danger-soft);
+    border-color: transparent;
+    padding: 1rem 1.25rem;
   }
-  .badge {
-    display: inline-block;
-    background: #fff3cd;
-    color: #856404;
-    padding: 0.125rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.8125rem;
-    margin-left: 0.5rem;
+  .loading {
+    padding: 2rem 0;
   }
-  .page-tabs {
-    display: flex;
-    gap: 0.25rem;
-    margin-bottom: 0.625rem;
-    border-bottom: 1px solid #ddd;
-    padding-bottom: 0.25rem;
-    flex-wrap: wrap;
+
+  /* status chip */
+  .status {
+    white-space: nowrap;
   }
-  .page-tabs button {
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px 6px 0 0;
-    padding: 0.4rem 0.75rem;
-    font: inherit;
-    color: #444;
-    cursor: pointer;
+  .status .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-faint);
   }
-  .page-tabs button:hover {
-    background: #ececec;
+  .status.ok {
+    background: var(--success-soft);
+    color: var(--success);
+    border-color: transparent;
   }
-  .page-tabs button.active {
-    background: #fff;
-    border-color: #ddd;
-    border-bottom-color: #fff;
-    color: #111;
-    margin-bottom: -1px;
+  .status.ok .dot {
+    background: var(--success);
   }
-  .page-tabs .add {
-    color: #4c8bf5;
-  }
-  .page-controls {
+
+  /* page bar */
+  .pagebar {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-    color: #555;
-    font-size: 0.875rem;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
   }
-  .page-controls input {
-    padding: 0.3rem 0.5rem;
-    border: 1px solid #d0d0d0;
-    border-radius: 6px;
+  .tabs {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .tab {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: 0.4rem 0.9rem;
     font: inherit;
-  }
-  .page-controls button {
-    background: #1d1d1d;
-    color: #fff;
-    border: none;
-    padding: 0.3rem 0.625rem;
-    border-radius: 6px;
-    font: inherit;
-  }
-  .link {
-    background: transparent !important;
-    color: #4c8bf5 !important;
-    border: none !important;
-    padding: 0.125rem 0.375rem !important;
+    font-weight: 550;
+    font-size: 0.9rem;
+    color: var(--text-muted);
     cursor: pointer;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease,
+      border-color 0.12s ease;
   }
-  .link:hover {
-    text-decoration: underline;
+  .tab:hover {
+    background: var(--surface-2);
+    color: var(--text);
   }
-  .link.danger {
-    color: #b00020 !important;
+  .tab.active {
+    background: var(--text);
+    color: var(--surface);
   }
+  .tab.add {
+    color: var(--accent);
+  }
+  .tab.add:hover {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+  .page-tools {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .rename {
+    width: 12rem;
+  }
+
+  /* layout */
   .layout {
     display: grid;
-    grid-template-columns: minmax(300px, 30rem) 1fr;
+    grid-template-columns: minmax(260px, 340px) 1fr;
     gap: 1.5rem;
     align-items: start;
   }
-  @media (max-width: 900px) {
+  @media (max-width: 920px) {
     .layout {
       grid-template-columns: 1fr;
     }
+    .device-panel {
+      position: static !important;
+    }
   }
-  .grid-pane {
+  .device-panel {
+    position: sticky;
+    top: 1rem;
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.7rem;
+  }
+  .device-caption {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-faint);
+    text-align: center;
   }
   .editor-pane {
     min-width: 0;
   }
+
   .empty {
-    background: #fff;
-    border-radius: 8px;
-    padding: 2rem;
+    padding: 2.5rem 1.5rem;
     text-align: center;
-    border: 1px dashed #ccc;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    align-items: center;
+    width: 100%;
   }
-  .primary {
-    background: #1d1d1d;
-    color: #fff;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    margin-top: 0.5rem;
-  }
+
   .hint {
-    background: #fafafa;
-    border: 1px dashed #ddd;
-    border-radius: 8px;
-    padding: 1.5rem;
+    padding: 3rem 2rem;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
   }
-  code {
-    background: #f0f0f0;
-    padding: 0.125rem 0.375rem;
-    border-radius: 4px;
-    font-size: 0.95em;
+  .hint-art {
+    width: 56px;
+    height: 56px;
+    display: grid;
+    place-items: center;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: var(--r-lg);
+    margin-bottom: 0.6rem;
+  }
+  .hint-art svg {
+    width: 30px;
+    height: 30px;
+  }
+  .hint h3 {
+    margin: 0;
+  }
+  .hint p {
+    margin: 0;
+    max-width: 22rem;
   }
 </style>
